@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         CP Toolkit — Graphic Link Autofill (fixed)
+// @name         CP Toolkit — Graphic Link Autofill
 // @namespace    http://your-org.example/
 // @version      1.4.0
 // @description  Auto-fill graphic link URLs only on /admin/graphiclinks.aspx (Tampermonkey-ready, embedded mapping + GM override)
@@ -132,28 +132,51 @@
     });
   }
 
-  function setupUI() {
-    try {
-      if (document.getElementById('enableGraphicButtonAutochange')) { log('UI already present'); return; }
-      const wrapper = document.createElement('div');
-      wrapper.id = 'cp-toolkit-graphiclink-wrapper';
-      wrapper.style.marginTop = '6px';
-      wrapper.innerHTML =
-        "<label style='display:flex;gap:.5rem;align-items:center;'><input id='enableGraphicButtonAutochange' type='checkbox'/>[CP Toolkit] Enable graphic link autochanger</label>" +
-        "<div id='graphicButtonChangeWarn' style='color:red;margin-top:6px;'></div>";
-      const linkInput = document.getElementById('linkUrl');
-      if (linkInput && linkInput.parentNode) {
-        const label = linkInput.closest('label');
-        if (label && label.parentNode) label.parentNode.insertBefore(wrapper, label.nextSibling);
-        else linkInput.parentNode.appendChild(wrapper);
+function setupUI() {
+  try {
+    // If UI already exists, do NOT change its checked state.
+    if (document.getElementById('enableGraphicButtonAutochange')) {
+      log('UI already present; leaving checkbox state unchanged');
+      return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.id = 'cp-toolkit-graphiclink-wrapper';
+    wrapper.style.marginTop = '6px';
+    wrapper.innerHTML =
+      "<label style='display:flex;gap:.5rem;align-items:center;'>" +
+      "<input id='enableGraphicButtonAutochange' type='checkbox'/>[CP Toolkit] Enable graphic link autochanger" +
+      '</label>' +
+      "<div id='graphicButtonChangeWarn' style='color:red;margin-top:6px;'></div>";
+
+    const linkInput = document.getElementById('linkUrl');
+    if (linkInput && linkInput.parentNode) {
+      const label = linkInput.closest('label');
+      if (label && label.parentNode) {
+        label.parentNode.insertBefore(wrapper, label.nextSibling);
       } else {
-        document.body.appendChild(wrapper);
+        linkInput.parentNode.appendChild(wrapper);
       }
-      const chk = document.getElementById('enableGraphicButtonAutochange');
-      if (linkInput && chk && linkInput.value === '') chk.checked = true;
-      log('UI inserted');
-    } catch (e) { warn('setupUI failed', e); }
+    } else {
+      document.body.appendChild(wrapper);
+    }
+
+    const checkbox = document.getElementById('enableGraphicButtonAutochange');
+
+    // ✔ AUTO-ENABLE ONLY WHEN linkUrl is empty (new graphic link)
+    if (linkInput && checkbox && linkInput.value.trim() === '') {
+      checkbox.checked = true;
+      log('Auto-enabled checkbox because #linkUrl is empty');
+    } else {
+      log('Checkbox inserted but NOT auto-enabled (linkUrl has value)');
+    }
+
+  } catch (e) {
+    warn('setupUI failed', e);
   }
+}
+
+
 
   function checkForLink(theText) {
     try {
@@ -288,4 +311,3 @@
 
   log('script installed and ready');
 })(window);
-
