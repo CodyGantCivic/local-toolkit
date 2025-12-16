@@ -1746,544 +1746,754 @@ function copyContainersToLayout() {
         script.remove();
     }
 
-    // ============================================================================
-    // ON-DEMAND TOOL #5: COPY WIDGET SKIN COMPONENT(S)
-    // ============================================================================
+// ============================================================================
+// ON-DEMAND TOOL #5: COPY WIDGET SKIN COMPONENT(S)
+// ============================================================================
 
-    function copyWidgetSkinComponents() {
-        if (!pageMatches(['/designcenter/themes/'])) {
-            alert('This tool only works in the Theme Manager');
-            return;
-        }
+function copyWidgetSkinComponents() {
+    if (!pageMatches(['/designcenter/themes/'])) {
+        alert('This tool only works in the Theme Manager');
+        return;
+    }
 
-        console.log(TOOLKIT_NAME + ' Running Copy Widget Skin Components');
+    console.log(TOOLKIT_NAME + ' Running Copy Widget Skin Components');
 
-        // Inject the code into page context to access DesignCenter
-        const copyComponentsCode = function() {
-            (async function() {
-                // Copy widget skin component to another widget skin.js
-                // ------------------------------------------------------
-                // This tool supports three modes:
-                // 1. Local Copy: Copy components between skins on the same site.
-                // 2. Export: Copy selected components to clipboard as JSON for use on another site.
-                // 3. Import: Paste JSON from clipboard and apply to a skin on this site.
-                //
-                // Enhanced with security validations for CMS environment.
-                if (!DesignCenter || !DesignCenter.themeJSON || !DesignCenter.themeJSON.WidgetSkins) {
-                    alert("Error: Design Center data not available. Please ensure you are in the theme editor.");
-                    return;
+    // Inject the code into page context to access DesignCenter
+    const copyComponentsCode = function() {
+        (async function() {
+            // Guard
+            if (!DesignCenter || !DesignCenter.themeJSON || !DesignCenter.themeJSON.WidgetSkins) {
+                alert("Error: Design Center data not available. Please ensure you are in the theme editor.");
+                return;
+            }
+
+            // Expose a global queue if not present
+            window.__CPToolkit_pendingTouchedSkins = window.__CPToolkit_pendingTouchedSkins || [];
+            window.__CPToolkit_lastTouchedSkins = window.__CPToolkit_lastTouchedSkins || [];
+
+            // Debug: print the WidgetSkins JSON
+            try {
+                console.groupCollapsed("[CP Toolkit] Detected DesignCenter.themeJSON.WidgetSkins");
+                console.log(DesignCenter.themeJSON.WidgetSkins);
+                console.groupEnd();
+            } catch (e) {
+                console.warn("[CP Toolkit] Could not serialize WidgetSkins for console log:", e);
+            }
+
+            // component type list (kept for UI)
+            var widgetSkinComponentTypes = [
+                "Wrapper","Header","Item List","Item","Item Title","Item Secondary Text","Item Bullets","Item Link",
+                "Read On","View All","RSS","Footer","Tab List","Tab","Tab Panel","Column Seperator","Calendar Header",
+                "Cal Grid","Cal Day Headers","Cal Day","Cal Event Link","Cal Today"
+            ];
+
+            var validSkins = [];
+            $.each(DesignCenter.themeJSON.WidgetSkins, function() {
+                if (this.Name && this.WidgetSkinID && this.Components) {
+                    validSkins.push(this);
                 }
+            });
+            if (validSkins.length === 0) {
+                alert("Error: No valid widget skins found.");
+                return;
+            }
 
-                var mode = prompt(
-                    "Select mode:\n1 = Local Copy (same site)\n2 = Export (copy to clipboard)\n3 = Import (paste from clipboard)\n\nEnter 1, 2, or 3:"
-                );
+            // UI helpers for modal selection (kept unchanged from original)
+            var SKIN_MODAL_STYLE_ID = "widget-skin-selector-style";
+            function ensureSkinSelectionStyles() {
+                if (document.getElementById(SKIN_MODAL_STYLE_ID)) return;
+                var style = document.createElement("style");
+                style.id = SKIN_MODAL_STYLE_ID;
+                style.textContent =
+                    ".widget-skin-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:20px;}" +
+                    ".widget-skin-modal{background:#fff;color:#222;max-width:620px;width:100%;max-height:90vh;display:flex;flex-direction:column;border-radius:6px;box-shadow:0 20px 60px rgba(0,0,0,0.4);padding:20px;font-family:Arial,Helvetica,sans-serif;}" +
+                    ".widget-skin-modal h2{margin:0 0 8px;font-size:20px;}" +
+                    ".widget-skin-modal p{margin:0 0 12px;font-size:14px;line-height:1.4;}" +
+                    ".widget-skin-modal__select{width:100%;border:1px solid #c7c7c7;border-radius:4px;padding:6px;font-size:14px;min-height:220px;flex:1;box-sizing:border-box;}" +
+                    ".widget-skin-modal__meta{margin-top:8px;font-size:12px;color:#555;}" +
+                    ".widget-skin-modal__actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}" +
+                    ".widget-skin-modal__actions button{padding:8px 16px;font-size:14px;border-radius:4px;border:none;cursor:pointer;}" +
+                    ".widget-skin-modal__actions button.primary{background:#0b6efb;color:#fff;}" +
+                    ".widget-skin-modal__actions button.secondary{background:#f2f2f2;color:#333;}" +
+                    ".widget-skin-modal__actions button:disabled{opacity:0.5;cursor:not-allowed;}";
+                document.head.appendChild(style);
+            }
 
-                if (!mode || !["1", "2", "3"].includes(mode.trim())) {
-                    alert("Invalid mode selection. Operation cancelled.");
-                    return;
+            function showSkinSelectionModal(options) {
+                ensureSkinSelectionStyles();
+                options = options || {};
+                var skins = Array.isArray(options.skins) ? options.skins : [];
+
+                return new Promise(function(resolve) {
+                    var overlay = document.createElement("div");
+                    overlay.className = "widget-skin-modal-overlay";
+
+                    var modal = document.createElement("div");
+                    modal.className = "widget-skin-modal";
+
+                    var title = document.createElement("h2");
+                    title.textContent = options.title || "Select Widget Skin";
+                    modal.appendChild(title);
+
+                    if (options.message) {
+                        var message = document.createElement("p");
+                        message.textContent = options.message;
+                        modal.appendChild(message);
+                    }
+
+                    var select = document.createElement("select");
+                    select.className = "widget-skin-modal__select";
+                    var visibleCount = Math.min(skins.length, 18);
+                    select.size = skins.length >= 8 ? visibleCount : (skins.length || 1);
+
+                    skins.forEach(function(skin) {
+                        var option = document.createElement("option");
+                        option.value = skin.WidgetSkinID;
+                        option.textContent = (skin.Name || "Unnamed Skin") + " (" + skin.WidgetSkinID + ")";
+                        select.appendChild(option);
+                    });
+
+                    modal.appendChild(select);
+
+                    var meta = document.createElement("div");
+                    meta.className = "widget-skin-modal__meta";
+                    meta.textContent = skins.length + " skin" + (skins.length === 1 ? "" : "s") + " available";
+                    modal.appendChild(meta);
+
+                    var actions = document.createElement("div");
+                    actions.className = "widget-skin-modal__actions";
+
+                    var cancelBtn = document.createElement("button");
+                    cancelBtn.type = "button";
+                    cancelBtn.className = "secondary";
+                    cancelBtn.textContent = options.cancelText || "Cancel";
+
+                    var selectBtn = document.createElement("button");
+                    selectBtn.type = "button";
+                    selectBtn.className = "primary";
+                    selectBtn.textContent = options.confirmText || "Select";
+                    selectBtn.disabled = skins.length === 0;
+
+                    actions.appendChild(cancelBtn);
+                    actions.appendChild(selectBtn);
+                    modal.appendChild(actions);
+
+                    overlay.appendChild(modal);
+                    document.body.appendChild(overlay);
+
+                    var resolved = false;
+                    function cleanup(value) {
+                        if (resolved) return;
+                        resolved = true;
+                        document.removeEventListener("keydown", handleKey, true);
+                        if (overlay && overlay.parentNode) {
+                            overlay.parentNode.removeChild(overlay);
+                        }
+                        resolve(value);
+                    }
+
+                    function handleKey(evt) {
+                        if (evt.key === "Escape") {
+                            evt.preventDefault();
+                            cleanup(null);
+                        }
+                        if ((evt.key === "Enter" || evt.key === "NumpadEnter") && document.activeElement === select && select.value) {
+                            evt.preventDefault();
+                            cleanup(select.value);
+                        }
+                    }
+
+                    document.addEventListener("keydown", handleKey, true);
+
+                    select.addEventListener("change", function() {
+                        selectBtn.disabled = !select.value;
+                    });
+
+                    select.addEventListener("dblclick", function() {
+                        if (select.value) {
+                            cleanup(select.value);
+                        }
+                    });
+
+                    selectBtn.addEventListener("click", function() {
+                        if (!selectBtn.disabled && select.value) {
+                            cleanup(select.value);
+                        }
+                    });
+
+                    cancelBtn.addEventListener("click", function() {
+                        cleanup(null);
+                    });
+
+                    overlay.addEventListener("click", function(evt) {
+                        if (evt.target === overlay) {
+                            cleanup(null);
+                        }
+                    });
+
+                    setTimeout(function() {
+                        if (skins.length > 0) {
+                            select.focus();
+                        }
+                    }, 0);
+                });
+            }
+
+            function validateComponentIndexes(input) {
+                if (!input || typeof input !== "string") return null;
+                var trimmedInput = input.trim();
+                if (trimmedInput === widgetSkinComponentTypes.length.toString()) {
+                    var allIndexes = [];
+                    for (var idx = 0; idx < widgetSkinComponentTypes.length; idx++) { allIndexes.push(idx); }
+                    return allIndexes;
                 }
+                var indexes = input.split(",").map(function(idx) {
+                    return parseInt(idx.trim(), 10);
+                }).filter(function(idx) {
+                    return !isNaN(idx) && idx >= 0 && idx < widgetSkinComponentTypes.length;
+                });
+                return indexes.length > 0 ? indexes : null;
+            }
 
-                var widgetSkinComponentTypes = [
-                    "Wrapper",
-                    "Header",
-                    "Item List",
-                    "Item",
-                    "Item Title",
-                    "Item Secondary Text",
-                    "Item Bullets",
-                    "Item Link",
-                    "Read On",
-                    "View All",
-                    "RSS",
-                    "Footer",
-                    "Tab List",
-                    "Tab",
-                    "Tab Panel",
-                    "Column Seperator",
-                    "Calendar Header",
-                    "Cal Grid",
-                    "Cal Day Headers",
-                    "Cal Day",
-                    "Cal Event Link",
-                    "Cal Today"
-                ];
-
-                var validSkins = [];
+            function findSkinById(skinId) {
+                if (!skinId) return null;
+                var foundSkin = null;
                 $.each(DesignCenter.themeJSON.WidgetSkins, function() {
-                    if (this.Name && this.WidgetSkinID && this.Components) {
-                        validSkins.push(this);
+                    if (this.WidgetSkinID == skinId && this.Components) {
+                        foundSkin = this;
+                        return false;
                     }
                 });
+                return foundSkin;
+            }
 
-                if (validSkins.length === 0) {
-                    alert("Error: No valid widget skins found.");
+            // New helper: build queue payload for a given toSkin object
+            function buildTouchedPayloadForSkin(toSkin) {
+                var comps = Array.isArray(toSkin.Components) ? toSkin.Components : [];
+                var changed = [];
+                comps.forEach(function(c, idx) {
+                    try {
+                        if (c && typeof c.MiscellaneousStyles === 'string' && c.MiscellaneousStyles.trim().length > 0) {
+                            changed.push({ idx: idx, snippet: c.MiscellaneousStyles.slice(0, 300).replace(/\n/g, '\\n') });
+                        }
+                    } catch (e) {}
+                });
+                if (changed.length === 0) return null;
+                return {
+                    skinID: toSkin.WidgetSkinID,
+                    skinName: toSkin.Name || '',
+                    changedComponents: changed,
+                    queuedAt: new Date().toISOString()
+                };
+            }
+
+            // Create a small progress/status modal used after save completes
+            function createOrGetProgressModal() {
+                var id = 'cp-toolkit-touch-progress-modal';
+                var existing = document.getElementById(id);
+                if (existing) return existing;
+                var overlay = document.createElement('div');
+                overlay.id = id;
+                overlay.style.position = 'fixed';
+                overlay.style.left = '0';
+                overlay.style.top = '0';
+                overlay.style.right = '0';
+                overlay.style.bottom = '0';
+                overlay.style.background = 'rgba(0,0,0,0.45)';
+                overlay.style.zIndex = 2147483647;
+                overlay.style.display = 'flex';
+                overlay.style.alignItems = 'center';
+                overlay.style.justifyContent = 'center';
+
+                var panel = document.createElement('div');
+                panel.style.width = '620px';
+                panel.style.maxHeight = '80vh';
+                panel.style.overflow = 'auto';
+                panel.style.background = '#fff';
+                panel.style.borderRadius = '8px';
+                panel.style.padding = '16px';
+                panel.style.boxSizing = 'border-box';
+                panel.style.boxShadow = '0 20px 60px rgba(0,0,0,0.4)';
+                panel.innerHTML = '<h3 style="margin-top:0">CP Toolkit — Touch Skin Progress</h3><div id="cp-toolkit-touch-progress-body" style="font-family:Arial,Helvetica,sans-serif;font-size:13px"></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button id="cp-toolkit-touch-close">Close</button></div>';
+                overlay.appendChild(panel);
+                document.body.appendChild(overlay);
+
+                document.getElementById('cp-toolkit-touch-close').addEventListener('click', function() {
+                    overlay.style.display = 'none';
+                });
+
+                return overlay;
+            }
+
+            // Core: process pending queue sequentially, calling the touch API
+            async function processPendingQueueAndTouch() {
+                var pending = window.__CPToolkit_pendingTouchedSkins || [];
+                if (!pending || !pending.length) {
+                    console.log('[CPToolkit] No pending touched skins to process.');
+                    return { success: true, processed: 0 };
+                }
+
+                // Wait for touch API readiness
+                var attempts = 0;
+                while (typeof window.CPToolkitTouchSkinAdvancedFor !== 'function' && attempts < 10) {
+                    attempts++;
+                    console.log('[CPToolkit] Touch API not available yet; retrying...', attempts);
+                    await new Promise(r => setTimeout(r, 800));
+                }
+                if (typeof window.CPToolkitTouchSkinAdvancedFor !== 'function') {
+                    console.warn('[CPToolkit] Touch API not available. You can run window.__CPToolkit_pendingTouchedSkins manually later.');
+                    return { success: false, processed: 0, reason: 'Touch API not available' };
+                }
+
+                var modal = createOrGetProgressModal();
+                var body = modal.querySelector('#cp-toolkit-touch-progress-body');
+                modal.style.display = 'flex';
+
+                var results = [];
+                for (var i = 0; i < pending.length; i++) {
+                    var item = pending[i];
+                    var skinLabel = (item.skinName || 'id:' + item.skinID);
+                    body.innerHTML += '<div><strong>Processing skin: ' + skinLabel + ' (' + item.skinID + ')</strong></div>';
+                    // sequentially call touch API for the component indexes
+                    try {
+                        const compIndexes = item.changedComponents.map(c => c.idx);
+                        body.innerHTML += '<div style="margin-left:12px">Components to touch: ' + compIndexes.join(', ') + '</div>';
+                        const res = await window.CPToolkitTouchSkinAdvancedFor(item.skinID, compIndexes);
+                        results.push({ item: item, result: res });
+                        body.innerHTML += '<div style="margin-left:12px;color:green">Completed: ' + JSON.stringify(res) + '</div>';
+                    } catch (err) {
+                        console.error('[CPToolkit] Error touching skin', item.skinID, err);
+                        body.innerHTML += '<div style="margin-left:12px;color:red">Error: ' + (err && err.message ? err.message : JSON.stringify(err)) + '</div>';
+                        results.push({ item: item, error: err });
+                    }
+                    // small pause to avoid UI thrash
+                    await new Promise(r => setTimeout(r, 300));
+                }
+
+                // persist last results and clear pending queue on success
+                window.__CPToolkit_lastTouchedSkins = results;
+                window.__CPToolkit_pendingTouchedSkins = [];
+                body.innerHTML += '<div style="margin-top:12px"><strong>All queued skins processed.</strong></div>';
+                return { success: true, processed: results.length, results: results };
+            }
+
+            // Patch/wrap saveTheme() to watch the network requests started immediately after it is called
+            (function wrapSaveThemeForCPToolkit() {
+                if (!window.saveTheme || window.__CPToolkit_saveThemeWrapped) return;
+                var origSave = window.saveTheme;
+                window.__CPToolkit_saveThemeWrapped = true;
+
+                window.saveTheme = function() {
+                    console.log('[CPToolkit] saveTheme() wrapper invoked — monitoring network activity for server-confirmed completion.');
+
+                    // trackers for requests started during the save call
+                    var trackedPromises = [];
+                    var originalXHRSend = XMLHttpRequest.prototype.send;
+                    var originalFetch = window.fetch;
+
+                    // patch XHR.send to capture outgoing XHRs (started during the save call)
+                    XMLHttpRequest.prototype.send = function() {
+                        try {
+                            var xhr = this;
+                            var url = (xhr && xhr._url) || null; // some libs set _url, fallback below
+                            var p = new Promise(function(resolve) {
+                                var onState = function() {
+                                    if (xhr.readyState === 4) {
+                                        resolve({ type: 'xhr', status: xhr.status, url: xhr.responseURL || url });
+                                    }
+                                };
+                                xhr.addEventListener('readystatechange', onState);
+                                // also handle abort/error
+                                xhr.addEventListener('error', function(){ resolve({ type:'xhr', status: 'error' }); });
+                                xhr.addEventListener('abort', function(){ resolve({ type:'xhr', status: 'abort' }); });
+                            });
+                            trackedPromises.push(p);
+                        } catch (e) {}
+                        return originalXHRSend.apply(this, arguments);
+                    };
+
+                    // patch fetch to capture outgoing fetches
+                    if (originalFetch) {
+                        window.fetch = function() {
+                            try {
+                                var fetchPromise = originalFetch.apply(this, arguments);
+                                var tracker = fetchPromise.then(function(resp){
+                                    return { type: 'fetch', status: resp && resp.status };
+                                }).catch(function(err){
+                                    return { type: 'fetch', status: 'error', error: err };
+                                });
+                                trackedPromises.push(tracker);
+                                return fetchPromise;
+                            } catch (e) {
+                                return originalFetch.apply(this, arguments);
+                            }
+                        };
+                    }
+
+                    // call the original saveTheme
+                    var ret;
+                    try {
+                        ret = origSave.apply(this, arguments);
+                    } catch (e) {
+                        // restore patched methods immediately on failure
+                        XMLHttpRequest.prototype.send = originalXHRSend;
+                        if (originalFetch) window.fetch = originalFetch;
+                        console.error('[CPToolkit] saveTheme() original threw an error:', e);
+                        throw e;
+                    }
+
+                    // give the save call short time to initiate network requests (200ms)
+                    setTimeout(function() {
+                        // wait for tracked promises to complete (with timeout)
+                        var timeoutMs = 15000; // 15s max
+                        var timeoutPromise = new Promise(function(resolve) {
+                            setTimeout(function() { resolve({ type: 'timeout' }); }, timeoutMs);
+                        });
+                        Promise.race([
+                            Promise.all(trackedPromises),
+                            timeoutPromise
+                        ]).then(function(results){
+                            // restore patched methods
+                            XMLHttpRequest.prototype.send = originalXHRSend;
+                            if (originalFetch) window.fetch = originalFetch;
+                            console.log('[CPToolkit] saveTheme network-waiter done (or timeout). Proceeding to process pending queue if any.');
+                            // process pending queue
+                            processPendingQueueAndTouch().then(function(res){
+                                console.log('[CPToolkit] processPendingQueueAndTouch result:', res);
+                            }).catch(function(err){
+                                console.error('[CPToolkit] Error while processing pending queue:', err);
+                            });
+                        }).catch(function(err){
+                            XMLHttpRequest.prototype.send = originalXHRSend;
+                            if (originalFetch) window.fetch = originalFetch;
+                            console.error('[CPToolkit] Unexpected error while waiting for save network requests:', err);
+                            processPendingQueueAndTouch();
+                        });
+                    }, 220);
+
+                    return ret;
+                };
+            })();
+
+            // Now run the original copy flow, but with the extra queuing step BEFORE calling saveTheme()
+
+            // Mode selection
+            var mode = prompt(
+                "Select mode:\n1 = Local Copy (same site)\n2 = Export (copy to clipboard)\n3 = Import (paste from clipboard)\n\nEnter 1, 2, or 3:"
+            );
+
+            if (!mode || !["1", "2", "3"].includes(mode.trim())) {
+                alert("Invalid mode selection. Operation cancelled.");
+                return;
+            }
+
+            // ---------------------------------------
+            // Now keep original code paths but add queuing on Local Copy & Import apply
+            // ---------------------------------------
+            if (mode.trim() === "1") {
+                // (original interactive local copy flow)
+                var skinToCopy = await showSkinSelectionModal({
+                    title: "Select source widget skin",
+                    message: "Choose the skin you would like to copy components from.",
+                    skins: validSkins,
+                    confirmText: "Use skin"
+                });
+
+                if (!skinToCopy) {
+                    alert("Operation cancelled.");
                     return;
                 }
 
-                var SKIN_MODAL_STYLE_ID = "widget-skin-selector-style";
+                var skinToEdit = await showSkinSelectionModal({
+                    title: "Select destination widget skin",
+                    message: "Choose the skin you would like to copy components to.",
+                    skins: validSkins,
+                    confirmText: "Use skin"
+                });
 
-                function ensureSkinSelectionStyles() {
-                    if (document.getElementById(SKIN_MODAL_STYLE_ID)) return;
-                    var style = document.createElement("style");
-                    style.id = SKIN_MODAL_STYLE_ID;
-                    style.textContent =
-                        ".widget-skin-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;" +
-                        "background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:20px;}" +
-                        ".widget-skin-modal{background:#fff;color:#222;max-width:620px;width:100%;max-height:90vh;display:flex;flex-direction:column;" +
-                        "border-radius:6px;box-shadow:0 20px 60px rgba(0,0,0,0.4);padding:20px;font-family:Arial,Helvetica,sans-serif;}" +
-                        ".widget-skin-modal h2{margin:0 0 8px;font-size:20px;}" +
-                        ".widget-skin-modal p{margin:0 0 12px;font-size:14px;line-height:1.4;}" +
-                        ".widget-skin-modal__select{width:100%;border:1px solid #c7c7c7;border-radius:4px;padding:6px;font-size:14px;" +
-                        "min-height:220px;flex:1;box-sizing:border-box;}" +
-                        ".widget-skin-modal__meta{margin-top:8px;font-size:12px;color:#555;}" +
-                        ".widget-skin-modal__actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}" +
-                        ".widget-skin-modal__actions button{padding:8px 16px;font-size:14px;border-radius:4px;border:none;cursor:pointer;}" +
-                        ".widget-skin-modal__actions button.primary{background:#0b6efb;color:#fff;}" +
-                        ".widget-skin-modal__actions button.secondary{background:#f2f2f2;color:#333;}" +
-                        ".widget-skin-modal__actions button:disabled{opacity:0.5;cursor:not-allowed;}";
-                    document.head.appendChild(style);
-                }
-
-                function showSkinSelectionModal(options) {
-                    ensureSkinSelectionStyles();
-                    options = options || {};
-                    var skins = Array.isArray(options.skins) ? options.skins : [];
-
-                    return new Promise(function(resolve) {
-                        var overlay = document.createElement("div");
-                        overlay.className = "widget-skin-modal-overlay";
-
-                        var modal = document.createElement("div");
-                        modal.className = "widget-skin-modal";
-
-                        var title = document.createElement("h2");
-                        title.textContent = options.title || "Select Widget Skin";
-                        modal.appendChild(title);
-
-                        if (options.message) {
-                            var message = document.createElement("p");
-                            message.textContent = options.message;
-                            modal.appendChild(message);
-                        }
-
-                        var select = document.createElement("select");
-                        select.className = "widget-skin-modal__select";
-                        var visibleCount = Math.min(skins.length, 18);
-                        select.size = skins.length >= 8 ? visibleCount : (skins.length || 1);
-
-                        skins.forEach(function(skin) {
-                            var option = document.createElement("option");
-                            option.value = skin.WidgetSkinID;
-                            option.textContent = (skin.Name || "Unnamed Skin") + " (" + skin.WidgetSkinID + ")";
-                            select.appendChild(option);
-                        });
-
-                        modal.appendChild(select);
-
-                        var meta = document.createElement("div");
-                        meta.className = "widget-skin-modal__meta";
-                        meta.textContent = skins.length + " skin" + (skins.length === 1 ? "" : "s") + " available";
-                        modal.appendChild(meta);
-
-                        var actions = document.createElement("div");
-                        actions.className = "widget-skin-modal__actions";
-
-                        var cancelBtn = document.createElement("button");
-                        cancelBtn.type = "button";
-                        cancelBtn.className = "secondary";
-                        cancelBtn.textContent = options.cancelText || "Cancel";
-
-                        var selectBtn = document.createElement("button");
-                        selectBtn.type = "button";
-                        selectBtn.className = "primary";
-                        selectBtn.textContent = options.confirmText || "Select";
-                        selectBtn.disabled = skins.length === 0;
-
-                        actions.appendChild(cancelBtn);
-                        actions.appendChild(selectBtn);
-                        modal.appendChild(actions);
-
-                        overlay.appendChild(modal);
-                        document.body.appendChild(overlay);
-
-                        var resolved = false;
-                        function cleanup(value) {
-                            if (resolved) return;
-                            resolved = true;
-                            document.removeEventListener("keydown", handleKey, true);
-                            if (overlay && overlay.parentNode) {
-                                overlay.parentNode.removeChild(overlay);
-                            }
-                            resolve(value);
-                        }
-
-                        function handleKey(evt) {
-                            if (evt.key === "Escape") {
-                                evt.preventDefault();
-                                cleanup(null);
-                            }
-                            if ((evt.key === "Enter" || evt.key === "NumpadEnter") && document.activeElement === select && select.value) {
-                                evt.preventDefault();
-                                cleanup(select.value);
-                            }
-                        }
-
-                        document.addEventListener("keydown", handleKey, true);
-
-                        select.addEventListener("change", function() {
-                            selectBtn.disabled = !select.value;
-                        });
-
-                        select.addEventListener("dblclick", function() {
-                            if (select.value) {
-                                cleanup(select.value);
-                            }
-                        });
-
-                        selectBtn.addEventListener("click", function() {
-                            if (!selectBtn.disabled && select.value) {
-                                cleanup(select.value);
-                            }
-                        });
-
-                        cancelBtn.addEventListener("click", function() {
-                            cleanup(null);
-                        });
-
-                        overlay.addEventListener("click", function(evt) {
-                            if (evt.target === overlay) {
-                                cleanup(null);
-                            }
-                        });
-
-                        setTimeout(function() {
-                            if (skins.length > 0) {
-                                select.focus();
-                            }
-                        }, 0);
-                    });
-                }
-
-                var widgetSkinComponentTypeList = "";
-                for (var i = 0; i < widgetSkinComponentTypes.length; i++) {
-                    if (i % 2 === 0 && i + 1 < widgetSkinComponentTypes.length) {
-                        widgetSkinComponentTypeList += widgetSkinComponentTypes[i] + ": " + i + " | " +
-                            widgetSkinComponentTypes[i + 1] + ": " + (i + 1) + "\n";
-                    } else if (i % 2 === 1) {
-                        continue;
-                    } else {
-                        widgetSkinComponentTypeList += widgetSkinComponentTypes[i] + ": " + i + "\n";
-                    }
-                }
-                widgetSkinComponentTypeList += "\nSelect All: " + widgetSkinComponentTypes.length + "\n";
-
-                function validateComponentIndexes(input) {
-                    if (!input || typeof input !== "string") return null;
-
-                    var trimmedInput = input.trim();
-
-                    if (trimmedInput === widgetSkinComponentTypes.length.toString()) {
-                        var allIndexes = [];
-                        for (var idx = 0; idx < widgetSkinComponentTypes.length; idx++) {
-                            allIndexes.push(idx);
-                        }
-                        return allIndexes;
-                    }
-
-                    var indexes = input.split(",").map(function(idx) {
-                        return parseInt(idx.trim(), 10);
-                    }).filter(function(idx) {
-                        return !isNaN(idx) && idx >= 0 && idx < widgetSkinComponentTypes.length;
-                    });
-
-                    return indexes.length > 0 ? indexes : null;
-                }
-
-                function findSkinById(skinId) {
-                    if (!skinId) return null;
-                    var foundSkin = null;
-                    $.each(DesignCenter.themeJSON.WidgetSkins, function() {
-                        if (this.WidgetSkinID == skinId && this.Components) {
-                            foundSkin = this;
-                            return false;
-                        }
-                    });
-                    return foundSkin;
-                }
-
-                function validateComponentData(component) {
-                    if (!component || typeof component !== "object") return false;
-                    return true;
-                }
-
-                if (mode.trim() === "1") {
-                    var skinToCopy = await showSkinSelectionModal({
-                        title: "Select source widget skin",
-                        message: "Choose the skin you would like to copy components from.",
-                        skins: validSkins,
-                        confirmText: "Use skin"
-                    });
-
-                    if (!skinToCopy) {
-                        alert("Operation cancelled.");
-                        return;
-                    }
-
-                    var skinToEdit = await showSkinSelectionModal({
-                        title: "Select destination widget skin",
-                        message: "Choose the skin you would like to copy components to.",
-                        skins: validSkins,
-                        confirmText: "Use skin"
-                    });
-
-                    if (!skinToEdit) {
-                        alert("Operation cancelled.");
-                        return;
-                    }
-
-                    var fromSkin = findSkinById(skinToCopy);
-                    var toSkin = findSkinById(skinToEdit);
-
-                    if (!fromSkin || !toSkin) {
-                        alert("Error: One or both selected skins not found.");
-                        return;
-                    }
-
-                    var correctSkinNames = confirm(
-                        "Copying from skin '" + fromSkin.Name + "' to '" + toSkin.Name + "'. If this is not correct, click cancel."
-                    );
-
-                    if (correctSkinNames && skinToCopy !== skinToEdit) {
-                        var componentsToCopy = prompt(
-                            "Which components would you like to copy?\n(comma separate, e.g. 0,1,2 or enter " + widgetSkinComponentTypes.length + " for all)\n\n" + widgetSkinComponentTypeList
-                        );
-
-                        var componentIndexes = validateComponentIndexes(componentsToCopy);
-                        if (!componentIndexes) {
-                            alert("Error: Invalid component selection.");
-                            return;
-                        }
-
-                        $.each(componentIndexes, function(_, idx) {
-                            if (fromSkin.Components[idx]) {
-                                var shouldCopy = confirm(
-                                    "Copying " + widgetSkinComponentTypes[idx] + ". Click OK to confirm or Cancel to skip"
-                                );
-                                if (shouldCopy) {
-                                    toSkin.RecordStatus = DesignCenter.recordStatus.Modified;
-                                    toSkin.Components[idx] = Object.assign({}, fromSkin.Components[idx]);
-                                    toSkin.Components[idx].WidgetSkinID = parseInt(skinToEdit, 10);
-                                    toSkin.Components[idx].RecordStatus = DesignCenter.recordStatus.Modified;
-                                }
-                            }
-                        });
-
-                        var shouldSave = confirm("Widget skin components copied. Click OK to save changes.");
-                        if (shouldSave) {
-                            saveTheme();
-                        } else {
-                            alert("Changes not saved. Refresh the page to cancel the changes.");
-                        }
-                    } else if (skinToCopy === skinToEdit) {
-                        alert("You cannot copy to the same skin.");
-                    }
+                if (!skinToEdit) {
+                    alert("Operation cancelled.");
                     return;
                 }
 
-                if (mode.trim() === "2") {
-                    var skinToExport = await showSkinSelectionModal({
-                        title: "Select skin to export from",
-                        message: "Choose the skin whose components you would like to export.",
-                        skins: validSkins,
-                        confirmText: "Export from this skin"
-                    });
-                    if (!skinToExport) {
-                        alert("Operation cancelled.");
-                        return;
-                    }
+                var fromSkin = findSkinById(skinToCopy);
+                var toSkin = findSkinById(skinToEdit);
 
-                    var fromSkinExport = findSkinById(skinToExport);
+                if (!fromSkin || !toSkin) {
+                    alert("Error: One or both selected skins not found.");
+                    return;
+                }
 
-                    if (!fromSkinExport) {
-                        alert("Error: Selected skin not found.");
-                        return;
-                    }
+                var correctSkinNames = confirm(
+                    "Copying from skin '" + fromSkin.Name + "' to '" + toSkin.Name + "'. If this is not correct, click cancel."
+                );
 
-                    var componentsToExport = prompt(
-                        "Which components would you like to export?\n(comma separate, e.g. 0,1,2 or enter " + widgetSkinComponentTypes.length + " for all)\n\n" + widgetSkinComponentTypeList
+                if (correctSkinNames && skinToCopy !== skinToEdit) {
+                    var componentsToCopy = prompt(
+                        "Which components would you like to copy?\n(comma separate, e.g. 0,1,2 or enter " + widgetSkinComponentTypes.length + " for all)\n\n" + widgetSkinComponentTypes.map(function(name, i){return name + ": " + i;}).join(" | ")
                     );
 
-                    var componentIndexesExport = validateComponentIndexes(componentsToExport);
-                    if (!componentIndexesExport) {
+                    var componentIndexes = validateComponentIndexes(componentsToCopy);
+                    if (!componentIndexes) {
                         alert("Error: Invalid component selection.");
                         return;
                     }
 
-                    var exportData = {
-                        version: "1.0",
-                        exportedAt: new Date().toISOString(),
-                        skinName: fromSkinExport.Name,
-                        skinID: fromSkinExport.WidgetSkinID,
-                        componentIndexes: componentIndexesExport,
-                        components: []
-                    };
-
-                    $.each(componentIndexesExport, function(_, idx) {
-                        if (fromSkinExport.Components[idx] && validateComponentData(fromSkinExport.Components[idx])) {
-                            exportData.components.push({
-                                idx: idx,
-                                type: widgetSkinComponentTypes[idx],
-                                data: fromSkinExport.Components[idx]
-                            });
+                    var anyCopied = false;
+                    $.each(componentIndexes, function(_, idx) {
+                        if (fromSkin.Components[idx]) {
+                            var shouldCopy = confirm(
+                                "Copying " + widgetSkinComponentTypes[idx] + ". Click OK to confirm or Cancel to skip"
+                            );
+                            if (shouldCopy) {
+                                toSkin.RecordStatus = DesignCenter.recordStatus.Modified;
+                                toSkin.Components[idx] = Object.assign({}, fromSkin.Components[idx]);
+                                toSkin.Components[idx].WidgetSkinID = parseInt(skinToEdit, 10);
+                                toSkin.Components[idx].RecordStatus = DesignCenter.recordStatus.Modified;
+                                anyCopied = true;
+                            }
                         }
                     });
 
-                    if (exportData.components.length === 0) {
-                        alert("Error: No valid components to export.");
+                    if (!anyCopied) {
+                        alert("No components were copied.");
                         return;
                     }
 
-                    var exportJson = JSON.stringify(exportData, null, 2);
-
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        try {
-                            await navigator.clipboard.writeText(exportJson);
-                            alert("Exported! Data copied to clipboard.\n\nPaste it on the destination site using Import mode.");
-                        } catch (err) {
-                            alert("Failed to copy to clipboard. You can manually copy the data from the next prompt.");
-                            prompt("Copy this data:", exportJson);
-                        }
+                    // Build payload for changed MiscellaneousStyles in the destination skin
+                    var payload = buildTouchedPayloadForSkin(toSkin);
+                    if (payload) {
+                        window.__CPToolkit_pendingTouchedSkins.push(payload);
+                        console.groupCollapsed('[CPToolkit] Queued touched skin: ' + payload.skinName + ' (' + payload.skinID + ')');
+                        console.table(payload.changedComponents);
+                        console.groupEnd();
                     } else {
+                        console.log('[CPToolkit] No MiscellaneousStyles found on destination skin after copy - nothing to touch.');
+                    }
+
+                    var shouldSave = confirm("Widget skin components copied. Click OK to save changes (script will wait for server save and then run the Touch steps).");
+                    if (shouldSave) {
+                        // We call saveTheme(), which is wrapped above; the wrapper will process the pending queue after server-confirmation
+                        saveTheme();
+                        alert('Save initiated. The touch steps will run automatically after the save completes. Check console for progress and the "Touch Progress" modal.');
+                    } else {
+                        alert("Changes not saved. Refresh the page to cancel the changes.");
+                    }
+                } else if (skinToCopy === skinToEdit) {
+                    alert("You cannot copy to the same skin.");
+                }
+                return;
+            }
+
+            // Export (mode 2) and Import (mode 3) logic remains basically the same as before.
+            // For import, when we apply components we will also queue touched skins (so imported components are touched too)
+
+            if (mode.trim() === "2") {
+                var skinToExport = await showSkinSelectionModal({
+                    title: "Select skin to export from",
+                    message: "Choose the skin whose components you would like to export.",
+                    skins: validSkins,
+                    confirmText: "Export from this skin"
+                });
+                if (!skinToExport) {
+                    alert("Operation cancelled.");
+                    return;
+                }
+
+                var fromSkinExport = findSkinById(skinToExport);
+
+                if (!fromSkinExport) {
+                    alert("Error: Selected skin not found.");
+                    return;
+                }
+
+                var componentsToExport = prompt(
+                    "Which components would you like to export?\n(comma separate, e.g. 0,1,2 or enter " + widgetSkinComponentTypes.length + " for all)\n\n" + widgetSkinComponentTypes.map(function(name, i){return name + ": " + i;}).join(" | ")
+                );
+
+                var componentIndexesExport = validateComponentIndexes(componentsToExport);
+                if (!componentIndexesExport) {
+                    alert("Error: Invalid component selection.");
+                    return;
+                }
+
+                var exportData = {
+                    version: "1.0",
+                    exportedAt: new Date().toISOString(),
+                    skinName: fromSkinExport.Name,
+                    skinID: fromSkinExport.WidgetSkinID,
+                    componentIndexes: componentIndexesExport,
+                    components: []
+                };
+
+                $.each(componentIndexesExport, function(_, idx) {
+                    if (fromSkinExport.Components[idx] && validateComponentData(fromSkinExport.Components[idx])) {
+                        exportData.components.push({
+                            idx: idx,
+                            type: widgetSkinComponentTypes[idx],
+                            data: fromSkinExport.Components[idx]
+                        });
+                    }
+                });
+
+                if (exportData.components.length === 0) {
+                    alert("Error: No valid components to export.");
+                    return;
+                }
+
+                var exportJson = JSON.stringify(exportData, null, 2);
+
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    try {
+                        await navigator.clipboard.writeText(exportJson);
+                        alert("Exported! Data copied to clipboard.\n\nPaste it on the destination site using Import mode.");
+                    } catch (err) {
+                        alert("Failed to copy to clipboard. You can manually copy the data from the next prompt.");
                         prompt("Copy this data:", exportJson);
                     }
-                    return;
+                } else {
+                    prompt("Copy this data:", exportJson);
                 }
+                return;
+            }
 
-                if (mode.trim() === "3") {
-                    async function processImport(importJson) {
-                        if (!importJson || typeof importJson !== "string") {
-                            alert("Error: No data provided.");
+            if (mode.trim() === "3") {
+                async function processImport(importJson) {
+                    if (!importJson || typeof importJson !== "string") {
+                        alert("Error: No data provided.");
+                        return;
+                    }
+
+                    var importData;
+                    try {
+                        importData = JSON.parse(importJson);
+                    } catch (e) {
+                        alert("Error: Invalid JSON data. Please ensure you copied the export data correctly.");
+                        return;
+                    }
+
+                    if (!importData || typeof importData !== "object" ||
+                        !importData.version || !importData.components || !Array.isArray(importData.components) ||
+                        !importData.componentIndexes || !Array.isArray(importData.componentIndexes)) {
+                        alert("Error: Invalid import data structure. Please ensure you're using data exported from this tool.");
+                        return;
+                    }
+
+                    if (importData.version !== "1.0") {
+                        if (!confirm("Warning: Import data is from a different version. Continue anyway?")) {
                             return;
-                        }
-
-                        var importData;
-                        try {
-                            importData = JSON.parse(importJson);
-                        } catch (e) {
-                            alert("Error: Invalid JSON data. Please ensure you copied the export data correctly.");
-                            return;
-                        }
-
-                        if (!importData || typeof importData !== "object" ||
-                            !importData.version || !importData.components || !Array.isArray(importData.components) ||
-                            !importData.componentIndexes || !Array.isArray(importData.componentIndexes)) {
-                            alert("Error: Invalid import data structure. Please ensure you're using data exported from this tool.");
-                            return;
-                        }
-
-                        if (importData.version !== "1.0") {
-                            if (!confirm("Warning: Import data is from a different version. Continue anyway?")) {
-                                return;
-                            }
-                        }
-
-                        var validIndexes = importData.componentIndexes.filter(function(idx) {
-                            return typeof idx === "number" && idx >= 0 && idx < widgetSkinComponentTypes.length;
-                        });
-
-                        if (validIndexes.length === 0) {
-                            alert("Error: No valid component indexes in import data.");
-                            return;
-                        }
-
-                        var componentNames = validIndexes.map(function(idx) {
-                            return widgetSkinComponentTypes[idx];
-                        }).join(", ");
-
-                        var info = "Import from skin: " + (importData.skinName || "Unknown") +
-                            " (ID: " + (importData.skinID || "Unknown") + ")\n" +
-                            "Components: " + componentNames + "\n\n" +
-                            "Continue with import?";
-
-                        if (!confirm(info)) return;
-
-                        var skinToEditImport = await showSkinSelectionModal({
-                            title: "Select destination widget skin",
-                            message: "Choose the skin that should receive the imported components.",
-                            skins: validSkins,
-                            confirmText: "Import into this skin"
-                        });
-                        if (!skinToEditImport) {
-                            alert("Operation cancelled.");
-                            return;
-                        }
-
-                        var toSkinImport = findSkinById(skinToEditImport);
-
-                        if (!toSkinImport) {
-                            alert("Error: Destination skin not found.");
-                            return;
-                        }
-
-                        var appliedCount = 0;
-                        $.each(importData.components, function(_, componentData) {
-                            var idx = componentData.idx;
-
-                            if (typeof idx !== "number" || idx < 0 || idx >= widgetSkinComponentTypes.length ||
-                                !componentData.data || !validateComponentData(componentData.data)) {
-                                console.warn("Skipping invalid component at index " + idx);
-                                return;
-                            }
-
-                            var shouldCopy = confirm(
-                                "Import component '" + widgetSkinComponentTypes[idx] + "' into skin '" + toSkinImport.Name + "'?\n\n" +
-                                "Click OK to confirm or Cancel to skip."
-                            );
-
-                            if (shouldCopy) {
-                                toSkinImport.RecordStatus = DesignCenter.recordStatus.Modified;
-                                toSkinImport.Components[idx] = Object.assign({}, componentData.data);
-                                toSkinImport.Components[idx].WidgetSkinID = parseInt(skinToEditImport, 10);
-                                toSkinImport.Components[idx].RecordStatus = DesignCenter.recordStatus.Modified;
-                                appliedCount++;
-                            }
-                        });
-
-                        if (appliedCount === 0) {
-                            alert("No components were imported.");
-                            return;
-                        }
-
-                        var shouldSaveImport = confirm(appliedCount + " component(s) imported successfully. Click OK to save changes.");
-                        if (shouldSaveImport) {
-                            saveTheme();
-                        } else {
-                            alert("Changes not saved. Refresh the page to cancel the changes.");
                         }
                     }
 
-                    if (navigator.clipboard && navigator.clipboard.readText) {
-                        try {
-                            var clipboardData = await navigator.clipboard.readText();
-                            await processImport(clipboardData);
-                        } catch (err) {
-                            var fallbackImport = prompt("Paste the exported data here:");
-                            await processImport(fallbackImport);
+                    var validIndexes = importData.componentIndexes.filter(function(idx) {
+                        return typeof idx === "number" && idx >= 0 && idx < widgetSkinComponentTypes.length;
+                    });
+
+                    if (validIndexes.length === 0) {
+                        alert("Error: No valid component indexes in import data.");
+                        return;
+                    }
+
+                    var componentNames = validIndexes.map(function(idx) {
+                        return widgetSkinComponentTypes[idx];
+                    }).join(", ");
+
+                    var info = "Import from skin: " + (importData.skinName || "Unknown") +
+                        " (ID: " + (importData.skinID || "Unknown") + ")\n" +
+                        "Components: " + componentNames + "\n\n" +
+                        "Continue with import?";
+
+                    if (!confirm(info)) return;
+
+                    var skinToEditImport = await showSkinSelectionModal({
+                        title: "Select destination widget skin",
+                        message: "Choose the skin that should receive the imported components.",
+                        skins: validSkins,
+                        confirmText: "Import into this skin"
+                    });
+                    if (!skinToEditImport) {
+                        alert("Operation cancelled.");
+                        return;
+                    }
+
+                    var toSkinImport = findSkinById(skinToEditImport);
+
+                    if (!toSkinImport) {
+                        alert("Error: Destination skin not found.");
+                        return;
+                    }
+
+                    var appliedCount = 0;
+                    $.each(importData.components, function(_, componentData) {
+                        var idx = componentData.idx;
+
+                        if (typeof idx !== "number" || idx < 0 || idx >= widgetSkinComponentTypes.length ||
+                            !componentData.data || !validateComponentData(componentData.data)) {
+                            console.warn("Skipping invalid component at index " + idx);
+                            return;
                         }
+
+                        var shouldCopy = confirm(
+                            "Import component '" + widgetSkinComponentTypes[idx] + "' into skin '" + toSkinImport.Name + "'?\n\n" +
+                            "Click OK to confirm or Cancel to skip."
+                        );
+
+                        if (shouldCopy) {
+                            toSkinImport.RecordStatus = DesignCenter.recordStatus.Modified;
+                            toSkinImport.Components[idx] = Object.assign({}, componentData.data);
+                            toSkinImport.Components[idx].WidgetSkinID = parseInt(skinToEditImport, 10);
+                            toSkinImport.Components[idx].RecordStatus = DesignCenter.recordStatus.Modified;
+                            appliedCount++;
+                        }
+                    });
+
+                    if (appliedCount === 0) {
+                        alert("No components were imported.");
+                        return;
+                    }
+
+                    // Build payload for destination skin and queue it
+                    var importPayload = buildTouchedPayloadForSkin(toSkinImport);
+                    if (importPayload) {
+                        window.__CPToolkit_pendingTouchedSkins.push(importPayload);
+                        console.groupCollapsed('[CPToolkit] Queued touched skin (import): ' + importPayload.skinName + ' (' + importPayload.skinID + ')');
+                        console.table(importPayload.changedComponents);
+                        console.groupEnd();
+                    }
+
+                    var shouldSaveImport = confirm(appliedCount + " component(s) imported successfully. Click OK to save changes (script will run touch steps after server-confirmation).");
+                    if (shouldSaveImport) {
+                        saveTheme();
+                        alert('Save initiated. The touch steps will run automatically after the save completes. Check console for progress and the "Touch Progress" modal.');
                     } else {
-                        var importJson = prompt("Paste the exported data here:");
-                        await processImport(importJson);
+                        alert("Changes not saved. Refresh the page to cancel the changes.");
                     }
-                    return;
                 }
-            })();
-        };
 
-        const script = document.createElement('script');
-        script.textContent = '(' + copyComponentsCode.toString() + ')();';
-        document.body.appendChild(script);
-        script.remove();
-    }
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    try {
+                        var clipboardData = await navigator.clipboard.readText();
+                        await processImport(clipboardData);
+                    } catch (err) {
+                        var fallbackImport = prompt("Paste the exported data here:");
+                        await processImport(fallbackImport);
+                    }
+                } else {
+                    var importJson = prompt("Paste the exported data here:");
+                    await processImport(importJson);
+                }
+                return;
+            }
+
+        })();
+    };
+
+    const script = document.createElement('script');
+    script.textContent = '(' + copyComponentsCode.toString() + ')();';
+    document.body.appendChild(script);
+    script.remove();
+}
+
 
     // ============================================================================
     // ON-DEMAND TOOL #6: SETUP DEFAULT WIDGET OPTION SETS
@@ -2450,6 +2660,3 @@ function copyContainersToLayout() {
     initialize();
 
 })();
-
-
-
